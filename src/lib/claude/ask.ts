@@ -19,7 +19,7 @@ const TOOLS: Anthropic.Tool[] = [
       properties: {
         query: { type: "string", description: "Mots-clés (français). Chaîne vide pour ne filtrer que par thème." },
         theme: { type: ["string", "null"], description: `Identifiant de thème parmi : ${THEMES.map((t) => t.id).join(", ")}` },
-        party_id: { type: ["string", "null"], description: "Identifiant de parti (lfi, pcf, eelv, ps, renaissance, modem, horizons, liot, lr, udr, rn, reconquete, dlf)" },
+        party_id: { type: ["string", "null"], description: "Identifiant de parti (lfi, pcf, eelv, ps, renaissance, modem, horizons, lr, udr, rn, reconquete)" },
         chamber: { type: ["string", "null"], enum: ["AN", "SENAT", null] },
       },
       required: ["query", "theme", "party_id", "chamber"],

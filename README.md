@@ -71,5 +71,5 @@ scripts/cli.ts         mêmes jobs en ligne de commande
 
 - Les députés remplacés en cours de législature ne sont pas nommés (seuls les élus en exercice sont importés) ; leurs votes comptent dans les agrégats de groupe.
 - Les groupes des sénateurs élus en septembre 2026 ne sont pas encore publiés par la source.
-- Le groupe LIOT et les non-inscrits ne correspondent pas à un parti : traités comme entités à part.
+- Seuls les partis à poids réel sont suivis ; le groupe LIOT (hétérogène), Debout la France et les non-inscrits n'ont pas de fiche parti (leurs votes de groupe restent visibles sur chaque scrutin).
 - L'orientation des axes est une convention de lecture, explicitée sur chaque page thème.

@@ -1,6 +1,10 @@
 /**
  * Référentiel des partis politiques français suivis par Apollon.
  *
+ * Périmètre : partis ayant un poids électoral ou parlementaire réel (groupe à
+ * l'Assemblée, ou score national significatif). Les petits partis, le groupe
+ * LIOT (hétérogène) et les non-inscrits ne sont pas suivis comme partis.
+ *
  * Classés de l'extrême gauche à l'extrême droite (lrIndex 0 → 100), uniquement
  * pour l'ORDRE D'AFFICHAGE. Les positions réelles sont calculées à partir des
  * programmes, des votes et des tweets.
@@ -130,20 +134,6 @@ export const PARTIES: PartyConfig[] = [
     leaders: ["Édouard Philippe"],
   },
   {
-    id: "liot",
-    name: "LIOT (Libertés, Indépendants, Outre-mer et Territoires)",
-    shortName: "LIOT",
-    color: "#8A6D3B",
-    family: "Divers / territoires",
-    lrIndex: 55,
-    anGroups: ["LIOT"],
-    parpolNames: ["Régions et peuples solidaires", "Union des démocrates européens, centristes et indépendants"],
-    senatGroups: ["RDSE"],
-    xHandles: [],
-    leaders: [],
-    notes: "Groupe parlementaire hétérogène (PRG, UDI, régionalistes) — pas un parti à proprement parler.",
-  },
-  {
     id: "lr",
     name: "Les Républicains",
     shortName: "LR",
@@ -198,20 +188,6 @@ export const PARTIES: PartyConfig[] = [
     xHandles: ["Reconquete_off", "ZemmourEric", "Sarah_Knafo"],
     leaders: ["Éric Zemmour", "Sarah Knafo"],
     notes: "Aucun député : positions calculables uniquement depuis le programme et les prises de parole.",
-  },
-  {
-    id: "dlf",
-    name: "Debout la France",
-    shortName: "DLF",
-    color: "#1F4E79",
-    family: "Droite souverainiste",
-    lrIndex: 86,
-    website: "https://www.debout-la-france.fr",
-    anGroups: [],
-    parpolNames: ["Debout la France"],
-    senatGroups: [],
-    xHandles: ["dupontaignan"],
-    leaders: ["Nicolas Dupont-Aignan"],
   },
 ];
 
