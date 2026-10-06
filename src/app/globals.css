@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f7f6f2;
+  --surface: #ffffff;
+  --surface-2: #f1efe9;
+  --border: #e4e1d8;
+  --ink: #1c1b18;
+  --ink-2: #4f4c45;
+  --ink-3: #8b877d;
+  --accent: #b8860b;
+  --accent-ink: #7a5a06;
+  --left: #c0392b;
+  --right: #1f5fa8;
+  --neutral: #a6a39b;
+  --good: #2e7d32;
+  --warn: #c77800;
+  --bad: #b3261e;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121311;
+    --surface: #1b1c19;
+    --surface-2: #232420;
+    --border: #2f302b;
+    --ink: #ecebe6;
+    --ink-2: #bdbab0;
+    --ink-3: #807d74;
+    --accent: #e0b43a;
+    --accent-ink: #f0cf6a;
+    --left: #e2574a;
+    --right: #5b93d9;
+    --neutral: #6f6c64;
+    --good: #66bb6a;
+    --warn: #ffb74d;
+    --bad: #ef5350;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-left: var(--left);
+  --color-right: var(--right);
+  --color-neutral: var(--neutral);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+a {
+  text-underline-offset: 3px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.prose-apollon p {
+  margin: 0.5rem 0;
+}
+.prose-apollon ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+  margin: 0.5rem 0;
+}
+.prose-apollon ol {
+  list-style: decimal;
+  padding-left: 1.25rem;
+}
+.prose-apollon h1,
+.prose-apollon h2,
+.prose-apollon h3 {
+  font-weight: 600;
+  margin: 0.9rem 0 0.4rem;
+}
+.prose-apollon strong {
+  font-weight: 600;
+}
+.prose-apollon code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--surface-2);
+  padding: 0 0.3em;
+  border-radius: 4px;
+}
+.prose-apollon table {
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+  font-size: 0.9em;
+}
+.prose-apollon th,
+.prose-apollon td {
+  border: 1px solid var(--border);
+  padding: 0.25rem 0.5rem;
+}
