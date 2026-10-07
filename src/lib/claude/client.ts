@@ -48,9 +48,9 @@ export function costOf(model: string, u: UsageLike): number {
   return (u.input_tokens * pin + cacheRead * pin * 0.1 + cacheWrite * pin * 1.25 + u.output_tokens * pout) / 1e6;
 }
 
-/** Enregistre l'usage en base et sur le job courant. */
-export function trackUsage(task: string, model: string, u: UsageLike, ctx?: JobContext): number {
-  const cost = costOf(model, u);
+/** Enregistre l'usage en base et sur le job courant. `costOverride` : estimation fournie par le moteur (Claude Code). */
+export function trackUsage(task: string, model: string, u: UsageLike, ctx?: JobContext, costOverride?: number): number {
+  const cost = costOverride ?? costOf(model, u);
   getDb()
     .insert(schema.usageLog)
     .values({

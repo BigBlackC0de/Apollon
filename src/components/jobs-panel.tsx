@@ -24,7 +24,7 @@ interface KindInfo {
   claude: boolean;
 }
 
-export function JobsPanel({ kinds, claudeReady }: { kinds: KindInfo[]; claudeReady: boolean }) {
+export function JobsPanel({ kinds, claudeReady, engine }: { kinds: KindInfo[]; claudeReady: boolean; engine: "api" | "claude-code" }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   const [budget, setBudget] = useState(25);
@@ -78,7 +78,8 @@ export function JobsPanel({ kinds, claudeReady }: { kinds: KindInfo[]; claudeRea
           Limite (test)
           <input type="number" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="ex. 100" className="w-24 border border-border rounded px-2 py-1 bg-surface" />
         </label>
-        {!claudeReady && <span className="text-warn text-xs">Clé Claude absente : les jobs Claude échoueront (ANTHROPIC_API_KEY dans .env, ou `ant auth login`).</span>}
+        {!claudeReady && <span className="text-warn text-xs">{engine === "claude-code" ? "Claude Code introuvable : installez-le et connectez-vous (`claude auth login`)." : "Clé API absente : renseignez ANTHROPIC_API_KEY dans .env."}</span>}
+        {engine === "claude-code" && claudeReady && <span className="text-xs text-ink-3">Les coûts affichés sont des équivalents : rien n'est facturé, l'usage est compté sur votre abonnement Claude.</span>}
         {error && <span className="text-bad text-xs">{error}</span>}
       </div>
       <div className="grid md:grid-cols-2 gap-2">

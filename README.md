@@ -16,13 +16,22 @@ Tout est digéré par Claude (Anthropic) en positions mesurables sur 11 thèmes,
 
 ```bash
 npm install
-cp .env.example .env      # renseigner ANTHROPIC_API_KEY (ou `ant auth login`)
+cp .env.example .env
 npm run dev               # http://localhost:3000
 ```
 
+### Deux moteurs Claude au choix
+
+| Moteur | Comment | Facturation |
+|---|---|---|
+| **Claude Code** (défaut si aucune clé API) | Apollon pilote le binaire officiel `claude -p`, connecté avec `claude auth login` | Couvert par votre abonnement Claude (Pro/Max), dans ses quotas d'usage. Usage personnel uniquement : Anthropic n'autorise pas à offrir un abonnement à des tiers. |
+| **API Anthropic** | `ANTHROPIC_API_KEY` dans `.env` | À l'usage (voir coûts ci-dessous) |
+
+Avec Claude Code, les montants affichés dans l'interface sont des **équivalents** (rien n'est facturé). Quand le quota de l'abonnement est atteint, les jobs attendent et reprennent seuls.
+
 Puis, dans **Données & jobs** (ou en CLI, voir plus bas) :
 
-| Étape | Job | Coût indicatif (Opus 5) |
+| Étape | Job | Coût indicatif en API (Opus 5) — inclus dans l'abonnement avec Claude Code |
 |---|---|---|
 | 1 | Importer l'Assemblée nationale | gratuit (open data officiel) |
 | 2 | Importer le Sénat | gratuit (NosParlementaires) |
@@ -46,7 +55,9 @@ Levier de coût : `APOLLON_MODEL_BULK=claude-sonnet-5` pour les tâches de masse
 ```
 src/lib/config/        thèmes (axes −1/+1) et référentiel des partis (groupes AN/Sénat, comptes X)
 src/lib/ingest/        AN (data.assemblee-nationale.fr), Sénat (nosparlementaires.fr)
+src/lib/llm/           couche moteur : API Anthropic ou Claude Code (`claude -p`)
 src/lib/claude/        classification des scrutins, programmes (web search + PDF), tweets, synthèses, chat
+src/lib/mcp/           serveur MCP exposant la base au chat via Claude Code
 src/lib/analysis/      calcul des positions votées / déclarées / écarts
 src/lib/db/            schéma Drizzle + SQLite (data/apollon.db, migrations auto)
 src/app/               Next.js 16 (App Router) : boussole, partis, thèmes, scrutins, parlementaires, comparer, demander, données & jobs

@@ -1,8 +1,8 @@
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { sql, eq, inArray, desc } from "drizzle-orm";
 import { getDb, getSqlite, nowIso, schema } from "../db";
 import { themesPromptBlock, THEME_BY_ID } from "../config/themes";
-import { claude, MODEL, MODEL_BULK, APOLLON_PERSONA, trackUsage, pMap } from "./client";
+import { APOLLON_PERSONA, pMap } from "./client";
+import { llm, modelFor, engine } from "../llm";
 import { PostBatchOutput, ClaimCheck } from "./schemas";
 import { getUserByUsername, getUserTweets, getSetting, setSetting } from "../x/client";
 import type { JobContext } from "../jobs";
@@ -102,7 +102,8 @@ Pour chaque message :
 - is_political : false pour les messages personnels, vœux, sport, etc.
 - tone : factuel / attaque (contre un adversaire) / promesse / emotion / autopromotion / autre.
 - themes : 0 à 3 thèmes avec la stance exprimée (-1 à +1) sur l'axe du thème. N'attribue une stance que si le message prend position.
-- claims : jusqu'à 3 affirmations vérifiables, reformulées de façon neutre. kind="vote-revendique" quand l'auteur affirme avoir voté / s'être opposé à quelque chose ("nous avons voté contre…", "nous sommes les seuls à avoir…"). checkable=true si des votes parlementaires ou un programme pourraient confirmer ou infirmer.`;
+- claims : jusqu'à 3 affirmations vérifiables, reformulées de façon neutre. kind="vote-revendique" quand l'auteur affirme avoir voté / s'être opposé à quelque chose ("nous avons voté contre…", "nous sommes les seuls à avoir…"). checkable=true si des votes parlementaires ou un programme pourraient confirmer ou infirmer.
+Réponds uniquement avec le JSON demandé.`;
 
 const BATCH = 30;
 
@@ -115,30 +116,24 @@ export async function analyzePosts(ctx: JobContext, opts?: { limit?: number }) {
     .orderBy(desc(schema.posts.createdAt))
     .limit(opts?.limit ?? 100000)
     .all();
-  ctx.log(`${pending.length} tweets à analyser (${MODEL_BULK})`);
+  const model = modelFor("bulk");
+  ctx.log(`${pending.length} tweets à analyser (${engine()}, ${model})`);
   if (!pending.length) return;
   const parties = new Map(db.select().from(schema.parties).all().map((p) => [p.id, p.name]));
   const batches: typeof pending[] = [];
   for (let i = 0; i < pending.length; i += BATCH) batches.push(pending.slice(i, i + BATCH));
   let done = 0;
   ctx.setProgress(0, pending.length);
-  await pMap(batches, 4, async (batch) => {
+  await pMap(batches, engine() === "claude-code" ? 2 : 4, async (batch) => {
     ctx.checkpoint();
-    const text = batch
-      .map((p) => `### ${p.id}\nAuteur : @${p.handle}${p.partyId ? ` (${parties.get(p.partyId)})` : ""} — ${p.createdAt.slice(0, 10)}\n${p.text}`)
-      .join("\n\n");
-    const res = await claude().messages.parse({
-      model: MODEL_BULK,
-      max_tokens: 16000,
-      system: [{ type: "text", text: SYSTEM_POSTS, cache_control: { type: "ephemeral" } }],
-      output_config: { format: zodOutputFormat(PostBatchOutput), effort: "medium" },
-      messages: [{ role: "user", content: `Analyse ces ${batch.length} messages. Réponds pour chaque id.\n\n${text}` }],
-    });
-    trackUsage("analyze-posts", MODEL_BULK, res.usage, ctx);
-    const out = res.parsed_output;
-    if (!out || res.stop_reason === "refusal") return;
+    const text = batch.map((p) => `### ${p.id}\nAuteur : @${p.handle}${p.partyId ? ` (${parties.get(p.partyId)})` : ""} — ${p.createdAt.slice(0, 10)}\n${p.text}`).join("\n\n");
+    const res = await llm({ task: "analyze-posts", system: SYSTEM_POSTS, prompt: `Analyse ces ${batch.length} messages. Réponds pour chaque id.\n\n${text}`, schema: PostBatchOutput, model: "bulk", effort: "medium", ctx });
+    if (!res.output) {
+      ctx.log(`Lot ignoré : ${res.error ?? "sortie vide"}`);
+      return;
+    }
     const wanted = new Set(batch.map((b) => b.id));
-    const rows = out.results
+    const rows = res.output.results
       .filter((r) => wanted.has(r.id))
       .map((r) => ({
         postId: r.id,
@@ -146,7 +141,7 @@ export async function analyzePosts(ctx: JobContext, opts?: { limit?: number }) {
         claims: r.claims.map((c) => ({ claim: c.claim, theme: c.theme, kind: c.kind, checkable: c.checkable })),
         tone: r.tone,
         isPolitical: r.is_political,
-        model: MODEL_BULK,
+        model,
         analyzedAt: nowIso(),
       }));
     if (rows.length) {
@@ -154,13 +149,17 @@ export async function analyzePosts(ctx: JobContext, opts?: { limit?: number }) {
       db.insert(schema.postAnalyses).values(rows).run();
     }
     done += batch.length;
-    ctx.setProgress(done, pending.length, `Tweets analysés : ${done}/${pending.length} — ${ctx.costUsd().toFixed(2)} $`);
+    ctx.setProgress(done, pending.length, `Tweets analysés : ${done}/${pending.length} — ${ctx.costUsd().toFixed(2)} $ équiv.`);
   });
 }
 
 /* ------------------------------------------------------------------ */
 /* Vérification des affirmations contre les votes                      */
 /* ------------------------------------------------------------------ */
+
+const SYSTEM_CLAIMS = `${APOLLON_PERSONA}
+
+Tâche : vérifier une affirmation politique à partir des votes parlementaires fournis. Sois strict : "confirme" seulement si les votes le montrent clairement, "inverifiable" si les preuves fournies ne permettent pas de conclure. Réponds uniquement avec le JSON demandé.`;
 
 export async function checkClaims(ctx: JobContext, opts?: { limit?: number }) {
   const db = getDb();
@@ -179,13 +178,13 @@ export async function checkClaims(ctx: JobContext, opts?: { limit?: number }) {
   ctx.log(`${tasks.length} affirmations vérifiables à confronter aux votes`);
   if (!tasks.length) return;
   const parties = new Map(db.select().from(schema.parties).all().map((p) => [p.id, p]));
+  const model = modelFor("main");
   let done = 0;
   ctx.setProgress(0, tasks.length);
-  await pMap(tasks, 3, async ({ row, claim }) => {
+  await pMap(tasks, engine() === "claude-code" ? 2 : 3, async ({ row, claim }) => {
     ctx.checkpoint();
     const party = row.partyId ? parties.get(row.partyId) : null;
     const theme = THEME_BY_ID[claim.theme!];
-    // Preuves : scrutins du thème avec la position du groupe du parti, les plus saillants
     const evidence = sqlite
       .prepare(
         `SELECT s.uid, s.date, s.title, s.chamber, a.summary, a.salience, a.themes, gv.position, gv.pour, gv.contre, gv.abstentions
@@ -211,16 +210,9 @@ Scrutins pertinents et positions du groupe :
 ${context || "(aucun scrutin trouvé sur ce thème)"}
 
 Confronte l'affirmation aux votes. Verdict : confirme / nuance / contredit / inverifiable. Cite les scrutins (uid) utilisés.`;
-    const res = await claude().messages.parse({
-      model: MODEL,
-      max_tokens: 8000,
-      system: [{ type: "text", text: `${APOLLON_PERSONA}\n\nTâche : vérifier une affirmation politique à partir des votes parlementaires fournis. Sois strict : "confirme" seulement si les votes le montrent clairement, "inverifiable" si les preuves fournies ne permettent pas de conclure.`, cache_control: { type: "ephemeral" } }],
-      output_config: { format: zodOutputFormat(ClaimCheck), effort: "medium" },
-      messages: [{ role: "user", content: prompt }],
-    });
-    trackUsage("check-claims", MODEL, res.usage, ctx);
-    const out = res.parsed_output;
-    if (out && res.stop_reason !== "refusal") {
+    const res = await llm({ task: "check-claims", system: SYSTEM_CLAIMS, prompt, schema: ClaimCheck, model: "main", effort: "medium", ctx });
+    const out = res.output;
+    if (out) {
       const evMap = new Map(evidence.map((e) => [e.uid, e]));
       db.insert(schema.claimChecks)
         .values({
@@ -235,13 +227,13 @@ Confronte l'affirmation aux votes. Verdict : confirme / nuance / contredit / inv
               const s = evMap.get(e.scrutinUid)!;
               return { scrutinUid: s.uid, title: s.title, date: s.date, position: s.position ?? "absent", direction: 0, salience: s.salience, note: e.note };
             }),
-          model: MODEL,
+          model,
           checkedAt: nowIso(),
         })
         .run();
     }
     done++;
-    ctx.setProgress(done, tasks.length, `Affirmations vérifiées : ${done}/${tasks.length} — ${ctx.costUsd().toFixed(2)} $`);
+    ctx.setProgress(done, tasks.length, `Affirmations vérifiées : ${done}/${tasks.length} — ${ctx.costUsd().toFixed(2)} $ équiv.`);
   });
 }
 

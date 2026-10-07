@@ -1,17 +1,16 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import crypto from "node:crypto";
 import { eq, and } from "drizzle-orm";
 import { getDb, nowIso, schema } from "../db";
 import { themesPromptBlock } from "../config/themes";
-import { claude, MODEL, APOLLON_PERSONA, trackUsage } from "./client";
+import { APOLLON_PERSONA } from "./client";
+import { llm, modelFor, engine } from "../llm";
 import { DiscoveredSources, ProgrammeAnalysis } from "./schemas";
 import type { JobContext } from "../jobs";
 
 /**
  * Programmes politiques :
  *  1. découverte des sources officielles par Claude + recherche web (temps réel)
- *  2. récupération du contenu (PDF natif → envoyé tel quel à Claude ; HTML → texte)
+ *  2. récupération du contenu (PDF natif ; HTML → texte)
  *  3. analyse structurée thème par thème
  */
 
@@ -26,6 +25,7 @@ export async function discoverProgrammes(ctx: JobContext, partyIds?: string[]) {
   const parties = db.select().from(schema.parties).all().filter((p) => !partyIds || partyIds.includes(p.id));
   const year = new Date().getFullYear();
   ctx.setProgress(0, parties.length, "Recherche des programmes officiels…");
+  ctx.log(`Recherche web via ${engine()} (${modelFor("main")})`);
   let i = 0;
   for (const p of parties) {
     ctx.checkpoint();
@@ -36,33 +36,24 @@ Nous sommes en ${year}. Cherche en priorité :
 2. à défaut, le dernier programme complet (législatives 2024, présidentielle 2022) ;
 3. une plateforme/charte/projet de fond publié sur le site officiel du parti${p.website ? ` (${p.website})` : ""} ou de sa campagne.
 Privilégie les PDF complets et les pages officielles hébergées par le parti. Évite les articles de presse, Wikipédia, et les sites tiers.
-Donne pour chaque source : URL exacte, titre, type, s'il s'agit d'un PDF, si elle est officielle, période visée, et pourquoi tu la retiens. Maximum 4 sources, les plus complètes d'abord.`;
+Donne pour chaque source : URL exacte, titre, type, s'il s'agit d'un PDF, si elle est officielle, période visée, et pourquoi tu la retiens. Maximum 4 sources, les plus complètes d'abord. Termine par la liste des URL retenues, une par ligne.`;
 
-    const res = await claude().messages.create({
-      model: MODEL,
-      max_tokens: 16000,
-      system: APOLLON_PERSONA,
-      tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 8, user_location: { type: "approximate", country: "FR", timezone: "Europe/Paris" } }],
-      messages: [{ role: "user", content: prompt }],
-    });
-    trackUsage("discover-programmes", MODEL, res.usage, ctx);
-    if (res.stop_reason === "refusal") {
-      ctx.log(`Refus du modèle pour ${p.name}`);
+    const search = await llm({ task: "discover-programmes", system: APOLLON_PERSONA, prompt, tools: ["web"], model: "main", effort: "medium", ctx });
+    if (!search.text) {
+      ctx.log(`${p.shortName} : recherche sans résultat (${search.error ?? "vide"})`);
+      ctx.setProgress(++i, parties.length);
       continue;
     }
-    const text = res.content
-      .filter((b): b is Anthropic.TextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
-    // Les résultats de recherche sont chiffrés ; les URL citées figurent dans le texte.
-    const parsed = await claude().messages.parse({
-      model: MODEL,
-      max_tokens: 8000,
-      output_config: { format: zodOutputFormat(DiscoveredSources), effort: "low" },
-      messages: [{ role: "user", content: `Extrais la liste des sources de programme mentionnées dans ce texte (URL exactes) :\n\n${text}` }],
+    const parsed = await llm({
+      task: "discover-programmes-parse",
+      system: "Tu extrais des données structurées à partir d'un texte, sans rien inventer. Réponds uniquement avec le JSON demandé.",
+      prompt: `Extrais la liste des sources de programme mentionnées dans ce texte (URL exactes) :\n\n${search.text}`,
+      schema: DiscoveredSources,
+      model: "main",
+      effort: "low",
+      ctx,
     });
-    trackUsage("discover-programmes-parse", MODEL, parsed.usage, ctx);
-    const sources = parsed.parsed_output?.sources ?? [];
+    const sources = parsed.output?.sources ?? [];
     let added = 0;
     for (const s of sources) {
       if (!/^https?:\/\//.test(s.url)) continue;
@@ -163,44 +154,32 @@ Consignes :
 - La stance mesure l'orientation des MESURES proposées, pas le ton. Des mesures mixtes → stance proche de 0 avec confiance moyenne.
 - Les "measures" doivent être concrètes et vérifiables plus tard contre des votes (âge, montant, abrogation de telle loi...).
 - Les "quotes" sont des citations littérales courtes du document.
-- Si le document n'est pas un programme du parti indiqué (page d'accueil, article), mets party_confirmed=false et reste prudent.`;
+- Si le document n'est pas un programme du parti indiqué (page d'accueil, article), mets party_confirmed=false et reste prudent.
+- Réponds uniquement avec le JSON demandé.`;
 
 export async function analyzeDocument(ctx: JobContext, docId: number) {
   const db = getDb();
   const doc = db.select().from(schema.documents).where(eq(schema.documents.id, docId)).get();
   if (!doc || doc.status !== "fetched") return;
   const party = db.select().from(schema.parties).where(eq(schema.parties.id, doc.partyId)).get();
-  const content: Anthropic.ContentBlockParam[] = [];
-  if (doc.pdfBase64) {
-    content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: doc.pdfBase64 }, title: doc.title });
-  } else if (doc.text) {
-    content.push({ type: "document", source: { type: "text", media_type: "text/plain", data: doc.text.slice(0, 1_500_000) }, title: doc.title });
-  } else return;
-  content.push({
-    type: "text",
-    text: `Parti : ${party?.name ?? doc.partyId}. Document : « ${doc.title} »${doc.url ? ` (${doc.url})` : ""}.\nAnalyse ce document selon la taxonomie.`,
+  if (!doc.pdfBase64 && !doc.text) return;
+  ctx.log(`Analyse : ${doc.title}`);
+  const model = modelFor("main");
+  const res = await llm({
+    task: "analyze-programme",
+    system: SYSTEM_ANALYSE,
+    prompt: `Parti : ${party?.name ?? doc.partyId}. Document : « ${doc.title} »${doc.url ? ` (${doc.url})` : ""}.\nAnalyse ce document selon la taxonomie.`,
+    schema: ProgrammeAnalysis,
+    model: "main",
+    effort: "high",
+    maxTokens: 32000,
+    pdf: doc.pdfBase64 ? { base64: doc.pdfBase64, title: doc.title } : undefined,
+    textDoc: !doc.pdfBase64 && doc.text ? { text: doc.text, title: doc.title } : undefined,
+    ctx,
   });
-
-  ctx.log(`Analyse Claude : ${doc.title}`);
-  const stream = claude().messages.stream({
-    model: MODEL,
-    max_tokens: 32000,
-    system: [{ type: "text", text: SYSTEM_ANALYSE, cache_control: { type: "ephemeral" } }],
-    output_config: { format: zodOutputFormat(ProgrammeAnalysis), effort: "high" },
-    messages: [{ role: "user", content }],
-  });
-  const res = await stream.finalMessage();
-  trackUsage("analyze-programme", MODEL, res.usage, ctx);
-  if (res.stop_reason === "refusal") {
-    db.update(schema.documents).set({ status: "error", error: "Refus du modèle" }).where(eq(schema.documents.id, docId)).run();
-    return;
-  }
-  const textBlock = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-  let parsed: ReturnType<typeof ProgrammeAnalysis.parse> | null = null;
-  try {
-    parsed = ProgrammeAnalysis.parse(JSON.parse(textBlock?.text ?? ""));
-  } catch (e) {
-    db.update(schema.documents).set({ status: "error", error: `Sortie non parsable : ${(e as Error).message.slice(0, 200)}` }).where(eq(schema.documents.id, docId)).run();
+  const parsed = res.output;
+  if (!parsed) {
+    db.update(schema.documents).set({ status: "error", error: res.error ?? "Sortie vide" }).where(eq(schema.documents.id, docId)).run();
     return;
   }
   db.delete(schema.documentAnalyses).where(eq(schema.documentAnalyses.documentId, docId)).run();
@@ -210,11 +189,11 @@ export async function analyzeDocument(ctx: JobContext, docId: number) {
       documentId: docId,
       theme: t.theme,
       stance: t.stance,
-      confidence: parsed!.party_confirmed ? t.confidence : t.confidence * 0.3,
+      confidence: parsed.party_confirmed ? t.confidence : t.confidence * 0.3,
       summary: t.summary,
       measures: t.measures,
       quotes: t.quotes,
-      model: MODEL,
+      model,
       analyzedAt: nowIso(),
     }));
   if (rows.length) db.insert(schema.documentAnalyses).values(rows).run();
@@ -226,10 +205,10 @@ export async function analyzeDocument(ctx: JobContext, docId: number) {
     })
     .where(eq(schema.documents.id, docId))
     .run();
-  // Résumé global stocké dans settings pour affichage
+  const summary = JSON.stringify({ period: parsed.period, summary: parsed.overall_summary });
   db.insert(schema.settings)
-    .values({ key: `doc-summary:${docId}`, value: JSON.stringify({ period: parsed.period, summary: parsed.overall_summary }), updatedAt: nowIso() })
-    .onConflictDoUpdate({ target: schema.settings.key, set: { value: JSON.stringify({ period: parsed.period, summary: parsed.overall_summary }), updatedAt: nowIso() } })
+    .values({ key: `doc-summary:${docId}`, value: summary, updatedAt: nowIso() })
+    .onConflictDoUpdate({ target: schema.settings.key, set: { value: summary, updatedAt: nowIso() } })
     .run();
   ctx.log(`${doc.title} : ${rows.length} thèmes positionnés (${parsed.party_confirmed ? "programme confirmé" : "NON confirmé"})`);
 }
@@ -255,7 +234,7 @@ export async function processProgrammes(ctx: JobContext) {
       ctx.log(`Erreur sur ${d.title} : ${(e as Error).message}`);
       db.update(schema.documents).set({ status: "error", error: (e as Error).message.slice(0, 300) }).where(eq(schema.documents.id, d.id)).run();
     }
-    ctx.setProgress(++i, fetched.length, `Programmes analysés : ${i}/${fetched.length} — ${ctx.costUsd().toFixed(2)} $`);
+    ctx.setProgress(++i, fetched.length, `Programmes analysés : ${i}/${fetched.length} — ${ctx.costUsd().toFixed(2)} $ équiv.`);
   }
 }
 

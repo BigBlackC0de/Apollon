@@ -1,8 +1,8 @@
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { and, eq } from "drizzle-orm";
 import { getDb, getSqlite, nowIso, schema } from "../db";
 import { THEMES, THEME_BY_ID } from "../config/themes";
-import { claude, MODEL, APOLLON_PERSONA, trackUsage, pMap } from "./client";
+import { APOLLON_PERSONA, pMap } from "./client";
+import { llm, modelFor, engine } from "../llm";
 import { CoherenceSynthesis } from "./schemas";
 import type { JobContext } from "../jobs";
 import type { EvidenceItem } from "../db/schema";
@@ -27,7 +27,8 @@ Règles :
 - Appuie-toi sur les scrutins fournis, cite-les précisément (date, objet) et dans key_evidence (uid). N'invente aucun vote.
 - Tiens compte de la logique parlementaire : un groupe d'opposition vote souvent CONTRE des textes gouvernementaux même proches de ses idées (ou l'inverse) ; signale-le quand cela explique un écart, sans l'excuser systématiquement.
 - Un parti sans député (positions votées absentes) → insuffisant, en le disant.
-- Rédige en français, pour un citoyen, sans jargon, 4 à 8 phrases.`;
+- Rédige en français, pour un citoyen, sans jargon, 4 à 8 phrases.
+- Réponds uniquement avec le JSON demandé.`;
 
 export async function synthesizeCoherence(ctx: JobContext, opts?: { partyIds?: string[]; themes?: string[]; force?: boolean }) {
   const db = getDb();
@@ -42,18 +43,16 @@ export async function synthesizeCoherence(ctx: JobContext, opts?: { partyIds?: s
     if (s.votedN === 0 && s.declaredStance === null && s.postsN === 0) continue;
     cells.push({ partyId: p.id, theme: t.id });
   }
-  ctx.log(`${cells.length} synthèses parti × thème à produire (${MODEL})`);
+  ctx.log(`${cells.length} synthèses parti × thème à produire (${engine()}, ${modelFor("main")})`);
   ctx.setProgress(0, cells.length);
   let done = 0;
-  await pMap(cells, 3, async (cell) => {
+  await pMap(cells, engine() === "claude-code" ? 2 : 3, async (cell) => {
     ctx.checkpoint();
     const party = parties.find((p) => p.id === cell.partyId)!;
     const theme = THEME_BY_ID[cell.theme];
     const score = db.select().from(schema.partyThemeScores).where(and(eq(schema.partyThemeScores.partyId, cell.partyId), eq(schema.partyThemeScores.theme, cell.theme))).get()!;
     const docs = sqlite
-      .prepare(
-        `SELECT d.title, da.stance, da.confidence, da.summary, da.measures, da.quotes FROM document_analyses da JOIN documents d ON d.id = da.document_id WHERE d.party_id = ? AND da.theme = ?`,
-      )
+      .prepare(`SELECT d.title, da.stance, da.confidence, da.summary, da.measures, da.quotes FROM document_analyses da JOIN documents d ON d.id = da.document_id WHERE d.party_id = ? AND da.theme = ?`)
       .all(cell.partyId, cell.theme) as { title: string; stance: number; confidence: number; summary: string; measures: string; quotes: string }[];
     const ev = sqlite
       .prepare(
@@ -64,9 +63,7 @@ export async function synthesizeCoherence(ctx: JobContext, opts?: { partyIds?: s
       )
       .all(cell.partyId, cell.theme, `%"${cell.theme}"%`) as { uid: string; date: string; title: string; chamber: string; sort: string | null; summary: string; salience: number; themes: string; position: string; pour: number; contre: number; abstentions: number; nonVotants: number }[];
     const tweets = sqlite
-      .prepare(
-        `SELECT p.handle, p.created_at AS createdAt, p.text, pa.themes FROM post_analyses pa JOIN posts p ON p.id = pa.post_id WHERE p.party_id = ? AND pa.themes LIKE ? ORDER BY p.created_at DESC LIMIT 12`,
-      )
+      .prepare(`SELECT p.handle, p.created_at AS createdAt, p.text FROM post_analyses pa JOIN posts p ON p.id = pa.post_id WHERE p.party_id = ? AND pa.themes LIKE ? ORDER BY p.created_at DESC LIMIT 12`)
       .all(cell.partyId, `%"${cell.theme}"%`) as { handle: string; createdAt: string; text: string }[];
 
     const prompt = `PARTI : ${party.name} (${party.shortName}) — ${party.family}${party.notes ? `\nNote : ${party.notes}` : ""}
@@ -85,16 +82,9 @@ ${ev.length ? ev.map((e) => `- [${e.uid}] ${e.date} ${e.chamber} — ${e.summary
 
 Rends ton verdict et ton analyse.`;
 
-    const res = await claude().messages.parse({
-      model: MODEL,
-      max_tokens: 8000,
-      system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
-      output_config: { format: zodOutputFormat(CoherenceSynthesis), effort: "high" },
-      messages: [{ role: "user", content: prompt }],
-    });
-    trackUsage("synthesize", MODEL, res.usage, ctx);
-    const out = res.parsed_output;
-    if (out && res.stop_reason !== "refusal") {
+    const res = await llm({ task: "synthesize", system: SYSTEM, prompt, schema: CoherenceSynthesis, model: "main", effort: "high", ctx });
+    const out = res.output;
+    if (out) {
       const evMap = new Map(ev.map((e) => [e.uid, e]));
       const existing = (score.evidence ?? []) as EvidenceItem[];
       const noted: EvidenceItem[] = out.key_evidence
@@ -109,8 +99,8 @@ Rends ton verdict et ton analyse.`;
         .set({ narrative: out.narrative, verdict: out.verdict, evidence: merged, updatedAt: nowIso() })
         .where(and(eq(schema.partyThemeScores.partyId, cell.partyId), eq(schema.partyThemeScores.theme, cell.theme)))
         .run();
-    }
+    } else ctx.log(`${party.shortName} × ${theme.label} : ${res.error ?? "pas de sortie"}`);
     done++;
-    ctx.setProgress(done, cells.length, `Synthèses : ${done}/${cells.length} — ${ctx.costUsd().toFixed(2)} $`);
+    ctx.setProgress(done, cells.length, `Synthèses : ${done}/${cells.length} — ${ctx.costUsd().toFixed(2)} $ équiv.`);
   });
 }

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { dataStatus, allParties, usageByTask } from "@/lib/queries";
 import { JOB_KINDS } from "@/lib/pipeline";
 import { xConfigured } from "@/lib/x/client";
-import { MODEL, MODEL_BULK } from "@/lib/claude/client";
+import { engineInfo } from "@/lib/llm";
 import { Card } from "@/components/ui";
 import { JobsPanel } from "@/components/jobs-panel";
 import { AddDocumentForm, ImportPostsForm } from "@/components/import-forms";
@@ -17,7 +17,8 @@ export default async function SourcesPage(props: PageProps<"/sources">) {
   const parties = allParties();
   const usage = usageByTask();
   const x = xConfigured();
-  const claudeReady = !!process.env.ANTHROPIC_API_KEY || !!process.env.ANTHROPIC_AUTH_TOKEN;
+  const eng = engineInfo();
+  const claudeReady = eng.ready;
   const docs = getDb().select().from(schema.documents).orderBy(desc(schema.documents.id)).limit(40).all();
   const xMsg = (Array.isArray(sp.x) ? sp.x[0] : sp.x) as string | undefined;
 
@@ -33,7 +34,10 @@ export default async function SourcesPage(props: PageProps<"/sources">) {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Données & jobs</h1>
-        <p className="text-sm text-ink-2">Modèle principal : <code>{MODEL}</code> · modèle de masse : <code>{MODEL_BULK}</code> · dépense Claude totale : <strong>{status.costTotal.toFixed(2)} $</strong> (30 j : {status.cost30d.toFixed(2)} $)</p>
+        <p className="text-sm text-ink-2">
+          Moteur : <strong>{eng.engine === "claude-code" ? "Claude Code (abonnement Claude du compte connecté, sans facturation à l'acte)" : "API Anthropic (clé API, facturation à l'usage)"}</strong>
+          {eng.ready ? "" : eng.engine === "claude-code" ? " — exécutable `claude` introuvable" : " — clé API absente"} · modèle principal : <code>{eng.modelMain}</code> · masse : <code>{eng.modelBulk}</code> · valeur équivalente consommée : <strong>{status.costTotal.toFixed(2)} $</strong> (30 j : {status.cost30d.toFixed(2)} $)
+        </p>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
@@ -50,7 +54,7 @@ export default async function SourcesPage(props: PageProps<"/sources">) {
       </div>
 
       <Card title="Jobs">
-        <JobsPanel kinds={Object.entries(JOB_KINDS).map(([id, v]) => ({ id, ...v }))} claudeReady={claudeReady} />
+        <JobsPanel kinds={Object.entries(JOB_KINDS).map(([id, v]) => ({ id, ...v }))} claudeReady={claudeReady} engine={eng.engine} />
       </Card>
 
       <div className="grid lg:grid-cols-2 gap-6">
@@ -109,7 +113,7 @@ export default async function SourcesPage(props: PageProps<"/sources">) {
         </Card>
       </div>
 
-      <Card title="Dépenses Claude par tâche">
+      <Card title={eng.engine === "claude-code" ? "Consommation Claude par tâche (valeur équivalente, incluse dans l'abonnement)" : "Dépenses Claude par tâche"}>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-xs text-ink-3 text-left">
