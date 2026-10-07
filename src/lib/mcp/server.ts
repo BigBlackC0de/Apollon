@@ -20,6 +20,7 @@ const call = (name: string) => async (input: Record<string, unknown>) => {
   }
 };
 
+server.registerTool("database_status", { description: "État de la base Apollon : volumes importés et classifiés (total et par thème), programmes, tweets, synthèses. À appeler pour toute question de volume ou de couverture.", inputSchema: {} }, call("database_status"));
 server.registerTool(
   "search_scrutins",
   {

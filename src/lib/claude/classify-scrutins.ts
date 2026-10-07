@@ -5,6 +5,7 @@ import { APOLLON_PERSONA, pMap } from "./client";
 import { llm, modelFor, engine } from "../llm";
 import { ScrutinBatchOutput } from "./schemas";
 import type { JobContext } from "../jobs";
+import { computePartyScores } from "../analysis/scores";
 
 /**
  * Classifie chaque scrutin : thèmes, sens d'un vote POUR sur l'axe, importance.
@@ -49,6 +50,7 @@ export async function classifyScrutins(ctx: JobContext, opts?: { chamber?: "AN" 
   for (let i = 0; i < pending.length; i += BATCH) batches.push(pending.slice(i, i + BATCH));
   let done = 0;
   let failed = 0;
+  let batchesDone = 0;
   ctx.setProgress(0, pending.length, "Classification des scrutins…");
   const concurrency = engine() === "claude-code" ? 2 : 4;
 
@@ -94,6 +96,14 @@ export async function classifyScrutins(ctx: JobContext, opts?: { chamber?: "AN" 
     }
     done += rows.length;
     ctx.setProgress(done + failed, pending.length, `Scrutins classifiés : ${done}/${pending.length} — ${ctx.costUsd().toFixed(2)} $ équiv.`);
+    // Rafraîchit les positions en cours de route pour que l'interface et le chat suivent.
+    if (++batchesDone % 8 === 0) {
+      try {
+        computePartyScores();
+      } catch (e) {
+        ctx.log(`Recalcul intermédiaire ignoré : ${(e as Error).message}`);
+      }
+    }
   });
   ctx.log(`Classification terminée : ${done} scrutins${failed ? `, ${failed} en échec (relancer le job)` : ""} — ${ctx.costUsd().toFixed(2)} $ équivalent`);
 }

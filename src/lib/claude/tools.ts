@@ -15,6 +15,11 @@ export interface ToolDef {
 
 export const TOOL_DEFS: ToolDef[] = [
   {
+    name: "database_status",
+    description: "État de la base Apollon : nombre de députés, sénateurs, scrutins importés et classifiés (total et par thème), programmes analysés, tweets, synthèses, date du dernier scrutin. À appeler pour toute question de volume ou de couverture.",
+    input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
+  },
+  {
     name: "search_scrutins",
     description: "Recherche des scrutins (votes) par mots-clés dans l'intitulé/résumé, optionnellement filtrés par thème, parti (position de son groupe) et chambre. Retourne jusqu'à 20 scrutins avec les positions des groupes.",
     input_schema: {
@@ -55,6 +60,25 @@ export function runTool(name: string, input: Record<string, unknown>): string {
   const sqlite = getSqlite();
   const db = getDb();
   switch (name) {
+    case "database_status": {
+      const one = (q: string) => (sqlite.prepare(q).get() as { n: number }).n;
+      const byTheme = sqlite.prepare(`SELECT primary_theme theme, COUNT(*) n FROM scrutin_analyses WHERE is_procedural = 0 AND primary_theme IS NOT NULL GROUP BY primary_theme ORDER BY n DESC`).all();
+      return JSON.stringify({
+        deputes_actifs: one(`SELECT COUNT(*) n FROM politicians WHERE chamber='AN' AND active=1`),
+        senateurs_actifs: one(`SELECT COUNT(*) n FROM politicians WHERE chamber='SENAT' AND active=1`),
+        scrutins_AN: one(`SELECT COUNT(*) n FROM scrutins WHERE chamber='AN'`),
+        scrutins_Senat: one(`SELECT COUNT(*) n FROM scrutins WHERE chamber='SENAT'`),
+        scrutins_classifies: one(`SELECT COUNT(*) n FROM scrutin_analyses`),
+        scrutins_classifies_procedure: one(`SELECT COUNT(*) n FROM scrutin_analyses WHERE is_procedural = 1`),
+        scrutins_classifies_par_theme: byTheme,
+        dernier_scrutin: (sqlite.prepare(`SELECT MAX(date) d FROM scrutins`).get() as { d: string | null }).d,
+        programmes_analyses: one(`SELECT COUNT(*) n FROM documents WHERE status='analyzed'`),
+        tweets_importes: one(`SELECT COUNT(*) n FROM posts`),
+        tweets_analyses: one(`SELECT COUNT(*) n FROM post_analyses`),
+        syntheses: one(`SELECT COUNT(*) n FROM party_theme_scores WHERE narrative IS NOT NULL`),
+        note: "La classification est incrémentale : les positions des partis ne reflètent que les scrutins déjà classifiés.",
+      });
+    }
     case "search_scrutins": {
       const q = String(input.query ?? "").trim();
       const theme = input.theme ? String(input.theme) : null;
