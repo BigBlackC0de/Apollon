@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="271 393 1064 824" role="img" aria-label="Cohérence-Politique">
+  <style>
+    .m { fill: #0f1115; stroke: none; }
+    .r { fill: none; stroke: #0f1115; stroke-width: 28; }
+    @media (prefers-color-scheme: dark) {
+      .m { fill: #eef0f3; }
+      .r { stroke: #eef0f3; }
+    }
+  </style>
+  <circle class="r" cx="683" cy="805" r="386" />
+  <circle class="r" cx="923" cy="805" r="386" />
+  <path class="m" d="M633.5 757.7L661.5 742.4L661.5 872.4L633.5 887.7ZM710.5 722.5L738.5 714.9L738.5 844.9L710.5 852.5ZM787 708.3L815 708.3L815 838.3L787 838.3ZM864 715L892 722.7L892 852.7L864 845ZM941 742.7L969 758L969 888L941 872.7Z" />
+</svg>

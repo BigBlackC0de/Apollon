@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/logo.svg" alt="Logo Cohérence-Politique" height="120">
+</p>
+
 # Cohérence-Politique
 
 **Ce que les partis disent. Ce qu'ils votent.**
