@@ -1,8 +1,8 @@
-# Apollon ☀
+# Cohérence-Politique
 
 **Ce que les partis disent. Ce qu'ils votent.**
 
-Apollon est un outil citoyen qui confronte, pour chaque parti politique français majeur (de LFI à Reconquête) :
+Cohérence-Politique est un outil citoyen qui confronte, pour chaque parti politique français majeur (de LFI à Reconquête) :
 
 - ses **programmes officiels** (trouvés sur le web et lus intégralement par Claude),
 - ses **votes au Parlement** (8 500+ scrutins de l'Assemblée nationale, XVIIe législature, votes nominatifs ; scrutins du Sénat),
@@ -20,11 +20,31 @@ cp .env.example .env
 npm run dev               # http://localhost:3000
 ```
 
+### Arrêter le serveur
+
+Dans le terminal où il tourne : `Ctrl + C`. S'il tourne en arrière-plan ou dans un autre terminal, repérer puis arrêter le processus qui écoute le port 3000.
+
+```powershell
+# Windows (PowerShell)
+Get-NetTCPConnection -LocalPort 3000 -State Listen | Select-Object OwningProcess   # repérer le PID
+Stop-Process -Id <PID> -Force
+
+# ou en une ligne
+Get-NetTCPConnection -LocalPort 3000 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+```
+
+```bash
+# macOS / Linux
+lsof -ti :3000 | xargs kill
+```
+
+Ne pas arrêter le serveur pendant un job en cours (panneau « Données & jobs ») : les jobs reprennent là où ils se sont arrêtés, mais mieux vaut attendre la fin du passage. À arrêter aussi avant de renommer ou déplacer `data/*.db`.
+
 ### Deux moteurs Claude au choix
 
 | Moteur | Comment | Facturation |
 |---|---|---|
-| **Claude Code** (défaut si aucune clé API) | Apollon pilote le binaire officiel `claude -p`, connecté avec `claude auth login` | Couvert par votre abonnement Claude (Pro/Max), dans ses quotas d'usage. Usage personnel uniquement : Anthropic n'autorise pas à offrir un abonnement à des tiers. |
+| **Claude Code** (défaut si aucune clé API) | Cohérence-Politique pilote le binaire officiel `claude -p`, connecté avec `claude auth login` | Couvert par votre abonnement Claude (Pro/Max), dans ses quotas d'usage. Usage personnel uniquement : Anthropic n'autorise pas à offrir un abonnement à des tiers. |
 | **API Anthropic** | `ANTHROPIC_API_KEY` dans `.env` | À l'usage (voir coûts ci-dessous) |
 
 Avec Claude Code, les montants affichés dans l'interface sont des **équivalents** (rien n'est facturé). Quand le quota de l'abonnement est atteint, les jobs attendent et reprennent seuls.
@@ -48,7 +68,7 @@ npm run job -- classify-scrutins --limit 200     # test à petite échelle
 npm run job -- refresh-all --budget 40           # plafond de dépense Claude par job
 ```
 
-Levier de coût : `APOLLON_MODEL_BULK=claude-sonnet-5` pour les tâches de masse (classification, tweets).
+Levier de coût : `COHERENCE_MODEL_BULK=claude-sonnet-5` pour les tâches de masse (classification, tweets).
 
 ## Architecture
 
@@ -59,7 +79,7 @@ src/lib/llm/           couche moteur : API Anthropic ou Claude Code (`claude -p`
 src/lib/claude/        classification des scrutins, programmes (web search + PDF), tweets, synthèses, chat
 src/lib/mcp/           serveur MCP exposant la base au chat via Claude Code
 src/lib/analysis/      calcul des positions votées / déclarées / écarts
-src/lib/db/            schéma Drizzle + SQLite (data/apollon.db, migrations auto)
+src/lib/db/            schéma Drizzle + SQLite (data/coherence.db, migrations auto)
 src/app/               Next.js 16 (App Router) : boussole, partis, thèmes, scrutins, parlementaires, comparer, demander, données & jobs
 scripts/cli.ts         mêmes jobs en ligne de commande
 ```
